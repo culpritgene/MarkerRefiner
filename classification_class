@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Apr 12 13:17:06 2018
+
+@author: lunar
+"""
+from packages import *
+
+class multiclass_data(object):
+    def __init__(self, ninputs, bin_output, split=0.2, rs=19, cv=4):
+        self.rs = rs
+        self.cv = cv
+        self.metrics = ['accuracy_score']
+        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(ninputs.values, 
+                bin_output, test_size=split, random_state=rs, shuffle=True)
+#         self.y_train_bin = label_binarize(self.y_train, classes=['I', 'II', 'III'])
+#         self.y_test_bin = label_binarize(self.y_test, classes=['I', 'II', 'III'])
+        
+    def metrics_return(self, pred, y_test=None):
+        if y_test:
+            pass
+        else:
+            y_test=self.y_test
+        res = []
+        if 'accuracy_score' in self.metrics:
+            res.append(accuracy_score(y_test, pred))
+        elif 'roc' in self.metrics:
+            res.append(roc_auc_score(y_test, pred))
+        return res
+                   
+
+    def tree_grids(self, mdepth=10, mfet=10, auto=True):
+        tree = DecisionTreeClassifier(max_depth=mdepth, random_state=self.rs)
+        if auto:
+            tree.fit(self.X_train, self.y_train)
+            y_pred = tree.predict(self.X_test)
+        else:
+            tree_hparams = {'max_depth':range(1,self.X_train.shape[1],20), 'min_samples_leaf':range(1, 6)}
+            tree_grid = GridSearchCV(tree, tree_hparams, cv=5)
+            tree_grid.fit(self.X_train, self.y_train)
+         #   print(tree_grid.best_params_, '\n', tree_grid.best_score_,)
+            y_pred = tree_grid.best_estimator_.predict(self.X_test)
+        return tree_grid, self.metrics_return(y_pred)
+
+
+    def ExtraTrees(self, auto=True):
+        forest = ExtraTreesClassifier(n_estimators=275,  min_samples_split=2,)
+        if auto:
+            forest.fit(self.X_train, self.y_train)
+            y_pred = forest.predict(self.X_test)
+        else:
+            tree_hparams = {'max_depth':range(10,290,20), 'min_samples_leaf': [1, 3, 5, 7], 'max_features':range(10, self.X_train.shape[1],10)}
+            tree_grid = GridSearchCV(forest, tree_hparams, n_jobs=-1, cv=4)
+            tree_grid.fit(self.X_train, self.y_train)
+            y_pred = tree_grid.best_estimator_.predict(self.X_test)
+        accuracy = self.metrics_return(y_pred, )
+        return accuracy, forest.feature_importances_, y_pred
+        
+  
+    def RandomForest(self, max_features_iter=30, auto=True):
+        forest = RandomForestClassifier(n_estimators=260,  min_samples_split=2, )
+        if auto:
+            forest.fit(self.X_train, self.y_train)
+            y_pred = forest.predict(self.X_test)
+        else:
+            tree_hparams = {'max_depth':range(10,290,30), 'min_samples_leaf': [1, 3, 5, 7], 'max_features':range(10, self.X_train.shape[1], max_features_iter)}
+            tree_grid = GridSearchCV(forest, tree_hparams, cv=4, n_jobs=-1)
+            tree_grid.fit(self.X_train, self.y_train)
+            y_pred = tree_grid.best_estimator_.predict(self.X_test)
+        accuracy = self.metrics_return(y_pred, )
+        return accuracy, forest.feature_importances_,  y_pred
+ 
+
+    def kneighbors_grids(self, N = 100):
+        # KNeighborsClassifier
+        knn = KNeighborsClassifier(n_neighbors=12, )
+#         knn_pipe = pipeline.Pipeline([('scaler', StandardScaler()),
+#                              ('knn', KNeighborsClassifier())])
+        knn_hpars ={'n_neighbors':range(1, self.y_test.shape[0])}
+        knn_grid = GridSearchCV(knn, knn_hpars, cv=self.cv, )
+        knn_grid.fit(self.X_train, self.y_train)
+        y_pred = knn_grid.best_estimator_.predict(self.X_test)
+        accuracy = self.metrics_return(y_pred, )
+        return accuracy, None, y_pred
+
+    def SVM(self):
+        SVC = svm.LinearSVC(multi_class='ovr',)
+        svm_hpars = {'C':np.logspace(-3,2,4)}
+        svm_grid = GridSearchCV(SVC, svm_hpars, cv=self.cv,)
+        svm_grid.fit(self.X_train, self.y_train)
+        y_pred = svm_grid.best_estimator_.predict(self.X_test)
+        accuracy = self.metrics_return(y_pred, )
+        return accuracy, None, y_pred
+    
+    def xgboost_classifier(self,):
+        objective= 'binary:logistic'
+        if len(set(self.y_train.values)) >2:
+            objective='multi:softmax'
+        xgboost_cl = XGBClassifier(n_estimators=200, objective=objective, learning_rate=1,)
+        xgboost_cl.fit(self.X_train, self.y_train)
+        y_pred =xgboost_cl.predict(self.X_test)
+        accuracy = self.metrics_return(y_pred, )
+        return accuracy, xgboost_cl.feature_importances_, y_pred
+    
+    
+    def combined(self):
+        output_scores = { 'KNs': None, 'RF':None, 'ExtraTree':None, 'SVC':None, 'XGB': None}
+#         output_scores['Tree'] = self.tree_grids()[0]
+        output_scores['KNs'] = self.kneighbors_grids()
+        output_scores['RF'] = self.RandomForest()
+        output_scores['ExtraTree'] =self.ExtraTrees()
+        output_scores['SVC'] = self.SVM()
+        output_scores['XGB'] = self.xgboost_classifier()
+        return output_scores

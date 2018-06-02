@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Apr 12 13:17:06 2018
+
+@author: lunar
+"""
+import os
+os.chdir('/home/lunar/Desktop/research_project/results/Pipeline')
+from packages import *
+
+class multiclass_data(object):
+    def __init__(self, ninputs, bin_output, split=0.2, rs=19, cv=4):
+        self.rs = rs
+        self.cv = cv
+        self.metrics = ['accuracy_score']
+        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(ninputs.values, 
+                bin_output, test_size=split, random_state=rs, shuffle=True)
+#         self.y_train_bin = label_binarize(self.y_train, classes=['I', 'II', 'III'])
+#         self.y_test_bin = label_binarize(self.y_test, classes=['I', 'II', 'III'])
+        
+    def metrics_return(self, pred, y_test=None):
+        if y_test:
+            pass
+        else:
+            y_test=self.y_test
+        res = []
+        if 'accuracy_score' in self.metrics:
+            res.append(accuracy_score(y_test, pred))
+        elif 'roc' in self.metrics:
+            res.append(roc_auc_score(y_test, pred))
+        return res
+                   
+
+    def tree_grids(self, mdepth=10, mfet=10, auto=True):
+        tree = DecisionTreeClassifier(max_depth=mdepth, random_state=self.rs)
+        if auto:
+            tree.fit(self.X_train, self.y_train)
+            y_pred = tree.predict(self.X_test)
+        else:
+            tree_hparams = {'max_depth':range(1,self.X_train.shape[1],20), 'min_samples_leaf':range(1, 6)}
+            tree_grid = GridSearchCV(tree, tree_hparams, cv=5)
+            tree_grid.fit(self.X_train, self.y_train)
+         #   print(tree_grid.best_params_, '\n', tree_grid.best_score_,)
+            y_pred = tree_grid.best_estimator_.predict(self.X_test)
+        return tree_grid, self.metrics_return(y_pred)
+
+
+    def ExtraTrees(self, auto=True):
+        forest = ExtraTreesClassifier(n_estimators=275,  min_samples_split=2,)
+        if auto:
+            forest.fit(self.X_train, self.y_train)
+            y_pred = forest.predict(self.X_test)
+        else:
+            tree_hparams = {'max_depth':range(10,290,20), 'min_samples_leaf': [1, 3, 5, 7], 'max_features':range(10, self.X_train.shape[1],10)}
+            tree_grid = GridSearchCV(forest, tree_hparams, n_jobs=-1, cv=4)
+            tree_grid.fit(self.X_train, self.y_train)
+            y_pred = tree_grid.best_estimator_.predict(self.X_test)
+        accuracy = self.metrics_return(y_pred, )
+        return accuracy, forest.feature_importances_, y_pred
+        
+  
+    def RandomForest(self, max_features_iter=30, auto=True):
+        forest = RandomForestClassifier(n_estimators=260,  min_samples_split=2, )
+        if auto:
+            forest.fit(self.X_train, self.y_train)
+            y_pred = forest.predict(self.X_test)
+        else:
+            tree_hparams = {'max_depth':range(10,290,30), 'min_samples_leaf': [1, 3, 5, 7], 'max_features':range(10, self.X_train.shape[1], max_features_iter)}
+            tree_grid = GridSearchCV(forest, tree_hparams, cv=4, n_jobs=-1)
+            tree_grid.fit(self.X_train, self.y_train)
+            y_pred = tree_grid.best_estimator_.predict(self.X_test)
+        accuracy = self.metrics_return(y_pred, )
+        return accuracy, forest.feature_importances_,  y_pred
+ 
+
+    def kneighbors_grids(self, N = 100):
+        # KNeighborsClassifier
+        knn = KNeighborsClassifier(n_neighbors=12, )
+#         knn_pipe = pipeline.Pipeline([('scaler', StandardScaler()),
+#                              ('knn', KNeighborsClassifier())])
+        knn_hpars ={'n_neighbors':range(1, self.y_test.shape[0])}
+        knn_grid = GridSearchCV(knn, knn_hpars, cv=self.cv, )
+        knn_grid.fit(self.X_train, self.y_train)
+        y_pred = knn_grid.best_estimator_.predict(self.X_test)
+        accuracy = self.metrics_return(y_pred, )
+        return accuracy, None, y_pred
+
+    def SVM(self):
+        SVC = svm.LinearSVC(multi_class='ovr',)
+        svm_hpars = {'C':np.logspace(-3,2,4)}
+        svm_grid = GridSearchCV(SVC, svm_hpars, cv=self.cv,)
+        svm_grid.fit(self.X_train, self.y_train)
+        y_pred = svm_grid.best_estimator_.predict(self.X_test)
+        accuracy = self.metrics_return(y_pred, )
+        return accuracy, None, y_pred
+    
+    def xgboost_classifier(self,):
+        objective= 'binary:logistic'
+        if len(set(self.y_train.values)) >2:
+            objective='multi:softmax'
+        xgboost_cl = XGBClassifier(n_estimators=200, objective=objective, learning_rate=1,)
+        xgboost_cl.fit(self.X_train, self.y_train)
+        y_pred =xgboost_cl.predict(self.X_test)
+        accuracy = self.metrics_return(y_pred, )
+        return accuracy, xgboost_cl.feature_importances_, y_pred
+    
+    
+    def combined(self):
+        output_scores = { 'KNs': None, 'RF':None, 'ExtraTree':None, 'SVC':None, 'XGB': None}
+#         output_scores['Tree'] = self.tree_grids()[0]
+        output_scores['KNs'] = self.kneighbors_grids()
+        output_scores['RF'] = self.RandomForest()
+        output_scores['ExtraTree'] =self.ExtraTrees()
+        output_scores['SVC'] = self.SVM()
+        output_scores['XGB'] = self.xgboost_classifier()
+        return output_scores
+    
+    
+    
+    
+    
+def test_pca(stem_base, y, subset , N, name='extedned_susbet'):
+    X = stem_base[subset]
+    pca_hueing(X,y, N, name)
+
+def plot_pcX(PcX, dims, name):
+    n = PcX.shape[1]-1
+    for i in range(1,n):
+        P = PcX.ix[:,i-1:i+1].join(PcX.ix[:,-1])
+#         fig, ax = plt.subplots(figsize=(10,10))       
+#   palette=sns.cubehelix_palette(8, start=1.1, rot=3, light=0.94, reverse=True)
+        g = sns.FacetGrid(PcX, size=6,  hue='tumour_grade',)
+        g = (g.map(plt.scatter, "PC{}".format(i), "PC{}".format(i+1), edgecolor="w", alpha=0.99, s=90).add_legend())
+       
+        plt.title('Random')
+        
+def pca_hueing(X,y, N=2,  add=None, name='None'):
+    pca_ = decomposition.PCA(n_components=N)
+    X_transformed = pca_.fit_transform(X)
+    PcX = pd.DataFrame(X_transformed, columns=['PC'+str(x) for x in range(1,N+1)], index=X.index)
+    PcX = PcX.join(y)
+    plot_pcX(PcX, len(y.unique()) , name)
+    return PcX
+
+from sklearn.cluster import KMeans, AgglomerativeClustering, AffinityPropagation, SpectralClustering
+from sklearn import metrics
+def clustering_results(X,y, ncl=3):  
+    algorithms = []
+    algorithms.append(KMeans(n_clusters=ncl, random_state=1))
+    algorithms.append(AffinityPropagation())
+    algorithms.append(SpectralClustering(n_clusters=ncl, random_state=1,
+                                         affinity='nearest_neighbors'))
+    algorithms.append(AgglomerativeClustering(n_clusters=ncl))
+
+    data = []
+    for algo in algorithms:
+        algo.fit(X)
+        data.append(({
+            'ARI': metrics.adjusted_rand_score(y, algo.labels_),
+            'AMI': metrics.adjusted_mutual_info_score(y, algo.labels_),
+            'Homogenity': metrics.homogeneity_score(y, algo.labels_),
+            'Completeness': metrics.completeness_score(y, algo.labels_),
+            'V-measure': metrics.v_measure_score(y, algo.labels_),
+            'Silhouette': metrics.silhouette_score(X, algo.labels_)}))
+
+    results = pd.DataFrame(data=data, columns=['ARI', 'AMI', 'Homogenity',
+                                               'Completeness', 'V-measure', 
+                                               'Silhouette'],
+                           index=['K-means', 'Affinity', 
+                                  'Spectral', 'Agglomerative'])
+    return results
+
+## Outlier Detection
+
+from sklearn.covariance import EllipticEnvelope
+from sklearn.ensemble import IsolationForest
+from sklearn.neighbors import LocalOutlierFactor
+
+def outliers_pca(PcX): 
+    outliers_fraction = 0.2
+    clusters_separation = [0, 1, 2]
+    rng = 33
+    
+    model =  svm.OneClassSVM(nu=0.95 * outliers_fraction + 0.05,
+                                         kernel="rbf", gamma=0.1)
+
+    
+    xx, yy = np.meshgrid(np.linspace(-7, 8, 4000), np.linspace(-7, 8, 4000))
+
+
+    plt.figure(figsize=(11, 9))
+    for i, class_name in enumerate(PcX.ix[:,-1].unique()):
+            Pcx2 = PcX[PcX['tumour_grade']==class_name]
+            X = Pcx2.ix[:,:-1]
+            y = Pcx2.ix[:,-1]
+            
+
+            
+            n_samples = X.shape[0]
+            n_inliers = int((1. - outliers_fraction) * n_samples)
+            n_outliers = int(outliers_fraction * n_samples)
+    
+            
+            clf = model
+            clf_name = 'SVM-cl'
+            # fit the data and tag outliers
+            if clf_name == "dunno":
+                y_pred = clf.fit_predict(X)
+                scores_pred = clf.negative_outlier_factor_
+            else:
+                clf.fit(X)
+                scores_pred = clf.decision_function(X)
+                y_pred = clf.predict(X)
+            threshold = stats.scoreatpercentile(scores_pred,
+                                                100 * outliers_fraction)
+            n_errors = (y_pred != y).sum()
+            # plot the levels lines and the points
+            if clf_name == "Local Outlier Factor":
+                # decision_function is private for LOF
+                Z = clf._decision_function(np.c_[xx.ravel(), yy.ravel()])
+            else:
+                Z = clf.decision_function(np.c_[xx.ravel(), yy.ravel()])
+            Z = Z.reshape(xx.shape)
+            subplot = plt.subplot(2, 2, i + 1)
+            subplot.contourf(xx, yy, Z, levels=np.linspace(Z.min(), threshold, 7),
+                             cmap=plt.cm.Blues_r)
+            a = subplot.contour(xx, yy, Z, levels=[threshold],
+                                linewidths=2, colors='red')
+            subplot.contourf(xx, yy, Z, levels=[threshold, Z.max()],
+                             colors='orange')
+            b = subplot.scatter(X.ix[:-n_outliers, 0], X.ix[:-n_outliers, 1], c='white',
+                                s=20, edgecolor='k')
+            c = subplot.scatter(X.ix[:-n_outliers:, 0], X.ix[:-n_outliers:, 1], c='black',
+                                s=20, edgecolor='k')
+            subplot.axis('tight')
+            subplot.legend(
+                [a.collections[0], b, c],
+                ['learned decision function', 'true outliers', 'true inliers'],
+                prop=matplotlib.font_manager.FontProperties(size=10),
+                loc='lower right')
+            subplot.set_xlabel("%s " % (class_name))
+            subplot.set_xlim((-5, 8))
+            subplot.set_ylim((-6, 7))
+#    plt.subplots_adjust(0.04, 0.1, 0.96, 0.94, 0.1, 0.26)
+    plt.suptitle("Outlier detection using SVM")
+
+def coincidence(stem_base, res1, res2, base='StemFull', fix='Mean_imp', model='xgb'):
+    intersected = [stem_base.columns]
+    for i in range(min(len(res1['gene_subsets']), len(res2['gene_subsets']))):
+        intersected.append(np.intersect1d(res1['gene_subsets'][i], res2['gene_subsets'][i]))
+    print('longest trajectory: {}'.format(i))
+    coins = [len(x) for x in intersected][2:]
+    
+    plt.plot(coins, label='coincidences')
+    plt.plot([len(x) for x in res1['gene_subsets']], label='res1')
+    plt.plot([len(x) for x in res2['gene_subsets']], label='res2')
+    plt.ylabel('Number of genes')
+    plt.xlabel('Step')
+    plt.title('Convergance of gene importancies: {}:{}:{}'.format(base, model, fix))
+    plt.legend()
+    plt.savefig('Convergance_of_gene_importancies_{}_{}_{}.png'.format(base, model, fix))
+    
+    f1 = lambda i:[x in res1['gene_subsets'][i] for x in stem_base.columns]
+    f2 = lambda i:[x in res2['gene_subsets'][i] for x in stem_base.columns]
+    
+    df1 = pd.DataFrame([f1(i) for i in range(i)]).astype('int').T
+    df1.index = stem_base.columns
+    df2 = pd.DataFrame([f2(i) for i in range(i)]).astype('int').T
+    df2.index = stem_base.columns
+    df = df1+df2
+    
+    if max(res1['loo_accs']) > max(res2['loo_accs']):
+        s = np.argmax(res1['loo_accs'])
+    else:
+        s = np.argmax(res2['loo_accs'])
+    df = df.sort_values(by=[i-1,i-2,i-3], ascending=False)
+    #df = df.sort_values(by=[s,s-1,s-2], ascending=False)
+    return (df, coins)
+
+
+def find_sidekicks0(X, subset):
+    corrs = {}
+    p_vals = {}
+    for s in subset:
+        corrs.update({s: [ pearsonr(X[s], X.ix[:,i])[0] for i in range(X.shape[1])] })
+        p_vals.update({s: [ pearsonr(X[s], X.ix[:,i])[1] for i in range(X.shape[1])] })
+    df_corrs = pd.DataFrame(corrs, columns=X.columns, index=X.columns)
+    df_corrs = df_corrs.dropna(axis=1)
+    
+    df_pvals = pd.DataFrame(p_vals, columns=X.columns, index=X.columns)
+    df_pvals = df_pvals.dropna(axis=1)
+    return df_corrs, df_pvals
+
+def find_sidekicks(X_base, subset):
+    
+    cor, pval = find_sidekicks0(X_base, subset)
+    cor[pval > 8.0e-04] = -1.0
+    sns.clustermap(cor)
+
+    proxies = {}
+    for i, col in enumerate(cor.columns):
+        proxies[col] = cor.nlargest(12, columns=cor.columns[i]).index
+    proxies = pd.DataFrame(proxies)
+    proxies = proxies.ix[1:,:]
+    return proxies
+    
+    
+    
+    
